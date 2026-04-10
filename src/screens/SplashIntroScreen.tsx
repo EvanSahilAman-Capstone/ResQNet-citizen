@@ -71,9 +71,11 @@ export default function SplashIntroScreen({ navigation }: any) {
 
     const timer = setTimeout(() => {
       navigation.replace('Home');
-    }, 3200);
+    }, 2000);
 
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+    };
   }, [fadeAnim, navigation, pulseA, pulseB, riseAnim, rotateAnim]);
 
   const spin = rotateAnim.interpolate({
@@ -113,7 +115,7 @@ export default function SplashIntroScreen({ navigation }: any) {
 
         <Text style={styles.brand}>ResQNet</Text>
         <Text style={styles.subtitle}>
-          Wildfire alerts, route guidance, and emergency awareness.
+          Loading dashboard...
         </Text>
       </Animated.View>
     </View>
