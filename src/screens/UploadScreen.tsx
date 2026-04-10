@@ -8,38 +8,124 @@ import {
   Alert,
   ScrollView,
 } from 'react-native';
+import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
+import {
+  fetchMe,
+  getReportUploadUrl,
+  uploadImageToS3,
+  submitFireReport,
+} from '../services/api';
 
 export default function UploadScreen() {
   const [title, setTitle] = useState('');
   const [details, setDetails] = useState('');
-  const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
+  const [selectedPhoto, setSelectedPhoto] = useState<{
+    uri: string;
+    type?: string;
+    fileName?: string;
+  } | null>(null);
+  const [severity, setSeverity] = useState<'low' | 'medium' | 'high' | 'critical'>('medium');
+  const [loading, setLoading] = useState(false);
 
   function handleAttachPhoto() {
-    Alert.alert(
-      'Attach Photo',
-      'Choose how you want to attach a wildfire image.',
-      [
-        {
-          text: 'Camera',
-          onPress: () => setSelectedPhoto('camera-photo.jpg'),
+    Alert.alert('Attach Photo', 'Choose an option', [
+      {
+        text: 'Camera',
+        onPress: async () => {
+          const result = await launchCamera({ mediaType: 'photo' });
+
+          if (result.assets && result.assets.length > 0) {
+            const photo = result.assets[0];
+
+            if (photo.uri) {
+              setSelectedPhoto({
+                uri: photo.uri,
+                type: photo.type,
+                fileName: photo.fileName,
+              });
+            }
+          }
         },
-        {
-          text: 'Gallery',
-          onPress: () => setSelectedPhoto('gallery-photo.jpg'),
+      },
+      {
+        text: 'Gallery',
+        onPress: async () => {
+          const result = await launchImageLibrary({ mediaType: 'photo' });
+
+          if (result.assets && result.assets.length > 0) {
+            const photo = result.assets[0];
+
+            if (photo.uri) {
+              setSelectedPhoto({
+                uri: photo.uri,
+                type: photo.type,
+                fileName: photo.fileName,
+              });
+            }
+          }
         },
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-      ]
-    );
+      },
+      {
+        text: 'Cancel',
+        style: 'cancel',
+      },
+    ]);
   }
 
-  function handleSubmit() {
-    Alert.alert(
-      'Report saved',
-      'This polished report page is ready. Next we connect it to backend upload and storage.'
-    );
+  async function handleSubmit() {
+    try {
+      if (!title.trim()) {
+        Alert.alert('Missing title', 'Please enter a report title.');
+        return;
+      }
+
+      if (!details.trim()) {
+        Alert.alert('Missing details', 'Please enter report details.');
+        return;
+      }
+
+      if (!selectedPhoto) {
+        Alert.alert('Missing photo', 'Please attach a wildfire photo.');
+        return;
+      }
+
+      setLoading(true);
+
+      const me = await fetchMe();
+      const reportId = `report-${Date.now()}`;
+      const hazardType = 'wildfire';
+
+      const uploadData = await getReportUploadUrl(reportId, hazardType);
+
+      await uploadImageToS3(
+        uploadData.upload_url,
+        uploadData.form_fields,
+        selectedPhoto
+      );
+
+      const payload = {
+        report_id: reportId,
+        photo_links: [uploadData.final_photo_url],
+        hazard_type: hazardType,
+        uploading_user: me?.sub || me?.user_id || me?.email || 'unknown-user',
+        coordinates: [43.589, -79.644],
+        severity,
+        description: `${title.trim()} - ${details.trim()}`,
+      };
+
+      await submitFireReport(payload);
+
+      Alert.alert('Success', 'Wildfire report submitted successfully.');
+
+      setTitle('');
+      setDetails('');
+      setSelectedPhoto(null);
+      setSeverity('medium');
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to submit wildfire report.');
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -73,6 +159,29 @@ export default function UploadScreen() {
           textAlignVertical="top"
         />
 
+        <Text style={styles.label}>Severity</Text>
+        <View style={styles.severityRow}>
+          {(['low', 'medium', 'high', 'critical'] as const).map(level => (
+            <Pressable
+              key={level}
+              style={[
+                styles.severityButton,
+                severity === level && styles.severityButtonActive,
+              ]}
+              onPress={() => setSeverity(level)}
+            >
+              <Text
+                style={[
+                  styles.severityButtonText,
+                  severity === level && styles.severityButtonTextActive,
+                ]}
+              >
+                {level}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+
         <Pressable style={styles.attachButton} onPress={handleAttachPhoto}>
           <Text style={styles.attachButtonText}>Attach Photo</Text>
         </Pressable>
@@ -80,12 +189,20 @@ export default function UploadScreen() {
         {selectedPhoto ? (
           <View style={styles.fileBox}>
             <Text style={styles.fileLabel}>Selected file</Text>
-            <Text style={styles.fileName}>{selectedPhoto}</Text>
+            <Text style={styles.fileName}>
+              {selectedPhoto.fileName || selectedPhoto.uri}
+            </Text>
           </View>
         ) : null}
 
-        <Pressable style={styles.submitButton} onPress={handleSubmit}>
-          <Text style={styles.submitButtonText}>Submit Wildfire Report</Text>
+        <Pressable
+          style={[styles.submitButton, loading && { opacity: 0.6 }]}
+          onPress={handleSubmit}
+          disabled={loading}
+        >
+          <Text style={styles.submitButtonText}>
+            {loading ? 'Submitting...' : 'Submit Wildfire Report'}
+          </Text>
         </Pressable>
       </View>
     </ScrollView>
@@ -151,6 +268,32 @@ const styles = StyleSheet.create({
   },
   textArea: {
     minHeight: 130,
+  },
+  severityRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 14,
+  },
+  severityButton: {
+    backgroundColor: '#13253B',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+  },
+  severityButtonActive: {
+    backgroundColor: '#1D4ED8',
+    borderColor: '#1D4ED8',
+  },
+  severityButtonText: {
+    color: '#B8C6D5',
+    fontWeight: '700',
+    textTransform: 'capitalize',
+  },
+  severityButtonTextActive: {
+    color: '#FFFFFF',
   },
   attachButton: {
     backgroundColor: '#16304A',
